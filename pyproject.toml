@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
   "huggingface_hub>=0.23",
   "numpy>=1.24",
+  "onnx>=1.16",
   "opencv-python-headless>=4.9",
   "Pillow>=10.0",
   "tritonclient[http]>=2.45",
