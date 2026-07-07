@@ -203,7 +203,12 @@ def install_models(repo_dir: Path, cache_dir: Path) -> None:
             output_name=io.output_name,
             output_dims=io.output_shape,
         )
-        io_manifest[artifact.name] = {"input": io.input_name, "output": io.output_name}
+        io_manifest[artifact.name] = {
+            "input": io.input_name,
+            "output": io.output_name,
+            "input_shape": io.input_shape,
+            "output_shape": io.output_shape,
+        }
         if artifact.name == "ocr_korean_rec":
             dict_file = resolve_dictionary_file(artifact.repo_id)
             dict_source = Path(hf_hub_download(artifact.repo_id, dict_file, cache_dir=cache_dir))

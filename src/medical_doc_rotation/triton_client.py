@@ -9,6 +9,14 @@ from medical_doc_rotation.types import AngleScore, OrientationScores
 from medical_doc_rotation.validation import OcrRecognition
 
 
+@dataclass(frozen=True)
+class ModelTensorNames:
+    input: str
+    output: str
+    input_shape: list[int] | None = None
+    output_shape: list[int] | None = None
+
+
 class TritonClientProtocol(Protocol):
     def infer(
         self,
@@ -78,10 +86,36 @@ def _image_to_nchw(image: Image.Image, size: tuple[int, int]) -> np.ndarray:
     return np.transpose(array, (2, 0, 1))[None, ...]
 
 
+def _image_size_from_shape(
+    tensor_names: ModelTensorNames,
+    default: tuple[int, int],
+) -> tuple[int, int]:
+    if not tensor_names.input_shape:
+        return default
+    dims = tensor_names.input_shape
+    if len(dims) >= 4 and dims[0] in {-1, 0, 1}:
+        dims = dims[1:]
+    if len(dims) >= 3 and dims[0] in {1, 3}:
+        height = dims[1] if dims[1] > 0 else default[1]
+        width = dims[2] if dims[2] > 0 else default[0]
+        return (width, height)
+    if len(dims) >= 2:
+        height = dims[-2] if dims[-2] > 0 else default[1]
+        width = dims[-1] if dims[-1] > 0 else default[0]
+        return (width, height)
+    return default
+
+
 class TritonOrientationClient:
-    def __init__(self, client: TritonClientProtocol, config: RotationConfig):
+    def __init__(
+        self,
+        client: TritonClientProtocol,
+        config: RotationConfig,
+        model_io: dict[str, ModelTensorNames] | None = None,
+    ):
         self.client = client
         self.config = config
+        self.model_io = model_io or {}
 
     def orientation_scores(self, image: Image.Image) -> list[OrientationScores]:
         model_map = {
@@ -89,16 +123,17 @@ class TritonOrientationClient:
             "paddle_doc_ori": self.config.model_names.paddle_doc_ori,
             "doctr_page": self.config.model_names.doctr_page,
         }
-        payload = _image_to_nchw(image, (512, 512))
         results: list[OrientationScores] = []
         for logical_name, model_name in model_map.items():
+            tensor_names = self.model_io.get(model_name, ModelTensorNames(input="input", output="probabilities"))
+            payload = _image_to_nchw(image, _image_size_from_shape(tensor_names, (512, 512)))
             response = self.client.infer(
                 model_name=model_name,
-                inputs={"input": payload},
-                outputs=["probabilities"],
+                inputs={tensor_names.input: payload},
+                outputs=[tensor_names.output],
                 timeout_ms=self.config.ensemble_timeout_ms,
             )
-            probabilities = response["probabilities"][0]
+            probabilities = _as_probabilities(response[tensor_names.output][0])
             results.append(
                 OrientationScores(
                     model_name=logical_name,
@@ -112,22 +147,34 @@ class TritonOrientationClient:
 
 
 class TritonCropRecognizer:
-    def __init__(self, client: TritonClientProtocol, config: RotationConfig, alphabet: list[str]):
+    def __init__(
+        self,
+        client: TritonClientProtocol,
+        config: RotationConfig,
+        alphabet: list[str],
+        model_io: dict[str, ModelTensorNames] | None = None,
+    ):
         self.client = client
         self.config = config
         self.alphabet = alphabet
+        self.model_io = model_io or {}
 
     def recognize(self, crops: list[Image.Image]) -> list[list[OcrRecognition]]:
         if not crops:
             return []
-        batch = np.concatenate([_image_to_nchw(crop, (160, 32)) for crop in crops], axis=0)
+        tensor_names = self.model_io.get(
+            self.config.model_names.korean_rec,
+            ModelTensorNames(input="input", output="logits"),
+        )
+        size = _image_size_from_shape(tensor_names, (160, 32))
+        batch = np.concatenate([_image_to_nchw(crop, size) for crop in crops], axis=0)
         response = self.client.infer(
             model_name=self.config.model_names.korean_rec,
-            inputs={"input": batch},
-            outputs=["logits"],
+            inputs={tensor_names.input: batch},
+            outputs=[tensor_names.output],
             timeout_ms=self.config.validation_timeout_ms,
         )
-        logits = response["logits"]
+        logits = response[tensor_names.output]
         return [self._decode(row) for row in logits]
 
     def _decode(self, logits: np.ndarray) -> list[OcrRecognition]:
@@ -147,3 +194,10 @@ def _softmax(values: np.ndarray) -> np.ndarray:
     shifted = values - np.max(values, axis=-1, keepdims=True)
     exp = np.exp(shifted)
     return exp / np.sum(exp, axis=-1, keepdims=True)
+
+
+def _as_probabilities(values: np.ndarray) -> np.ndarray:
+    array = np.asarray(values, dtype=np.float32)
+    if np.any(array < 0) or not np.isclose(float(np.sum(array)), 1.0, atol=1e-3):
+        return _softmax(array)
+    return array
