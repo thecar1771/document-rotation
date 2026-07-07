@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medical-doc-rotation"
+version = "0.1.0"
+description = "Medical document image rotation preprocessor with Triton model serving"
+requires-python = ">=3.10"
+dependencies = [
+  "huggingface_hub>=0.23",
+  "numpy>=1.24",
+  "opencv-python-headless>=4.9",
+  "Pillow>=10.0",
+  "tritonclient[http]>=2.45",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+medical-doc-rotate = "medical_doc_rotation.cli:main"
+medical-doc-setup-models = "scripts.setup_models:main"
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["medical_doc_rotation*", "scripts*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
