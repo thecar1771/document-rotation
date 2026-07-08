@@ -183,6 +183,115 @@ def write_repository_manifest(repo_dir: Path, artifacts: list[ModelArtifact]) ->
     (repo_dir / "MODEL_SOURCES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def find_existing_model_source(search_dir: Path, artifact: ModelArtifact) -> Path:
+    candidates = [
+        search_dir / artifact.name / "1" / "model.onnx",
+        search_dir / artifact.name / "model.onnx",
+        search_dir / artifact.filename,
+        search_dir / Path(artifact.filename).name,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    basename = Path(artifact.filename).name.lower()
+    artifact_tokens = {token for token in artifact.name.lower().split("_") if token}
+    matches = []
+    for candidate in search_dir.rglob("*.onnx"):
+        relative = candidate.relative_to(search_dir).as_posix().lower()
+        if relative.endswith(artifact.filename.lower()) or candidate.name.lower() == basename:
+            matches.append(candidate)
+            continue
+        if artifact_tokens and artifact_tokens.issubset(set(relative.replace("-", "_").split("_"))):
+            matches.append(candidate)
+    if matches:
+        return sorted(matches, key=lambda item: len(item.as_posix()))[0]
+    raise FileNotFoundError(f"Could not find existing ONNX for {artifact.name} under {search_dir}")
+
+
+def _find_existing_model_source(search_dirs: list[Path], artifact: ModelArtifact) -> Path:
+    errors = []
+    for search_dir in search_dirs:
+        try:
+            return find_existing_model_source(search_dir, artifact)
+        except FileNotFoundError as exc:
+            errors.append(str(exc))
+    raise FileNotFoundError("; ".join(errors))
+
+
+def find_existing_dictionary_source(search_dirs: list[Path]) -> Path | None:
+    preferred = []
+    for search_dir in search_dirs:
+        preferred.extend(
+            [
+                search_dir / "ocr_korean_rec" / "dict.txt",
+                search_dir / "languages" / "korean" / "dict.txt",
+            ]
+        )
+    for candidate in preferred:
+        if candidate.is_file():
+            return candidate
+    for search_dir in search_dirs:
+        candidates = [
+            item
+            for item in search_dir.rglob("*")
+            if item.is_file()
+            and "korean" in item.as_posix().lower()
+            and ("dict" in item.name.lower() or item.suffix.lower() in {".txt", ".dict"})
+        ]
+        if candidates:
+            return sorted(candidates, key=lambda item: len(item.as_posix()))[0]
+    return None
+
+
+def _copy_existing_model(source: Path, repo_dir: Path, artifact: ModelArtifact) -> Path:
+    version_dir = repo_dir / artifact.name / "1"
+    version_dir.mkdir(parents=True, exist_ok=True)
+    target = version_dir / "model.onnx"
+    if source.resolve() != target.resolve():
+        shutil.copy2(source, target)
+    return target
+
+
+def configure_existing_repository(
+    repo_dir: Path,
+    artifacts: list[ModelArtifact] | None = None,
+    source_dir: Path | None = None,
+) -> None:
+    selected_artifacts = artifacts or ARTIFACTS
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    search_dirs = [repo_dir]
+    if source_dir is not None:
+        search_dirs.append(source_dir)
+
+    io_manifest: dict[str, dict[str, str | list[int]]] = {}
+    for artifact in selected_artifacts:
+        source = _find_existing_model_source(search_dirs, artifact)
+        model_path = _copy_existing_model(source, repo_dir, artifact)
+        io = inspect_onnx_io(model_path)
+        write_model_config(
+            repo_dir / artifact.name,
+            name=artifact.name,
+            input_name=io.input_name,
+            input_shape=io.input_shape,
+            output_name=io.output_name,
+            output_dims=io.output_shape,
+        )
+        io_manifest[artifact.name] = {
+            "input": io.input_name,
+            "output": io.output_name,
+            "input_shape": io.input_shape,
+            "output_shape": io.output_shape,
+        }
+
+    dict_source = find_existing_dictionary_source(search_dirs)
+    if dict_source is not None:
+        shutil.copy2(dict_source, repo_dir / "ocr_korean_rec" / "dict.txt")
+
+    write_repository_manifest(repo_dir, selected_artifacts)
+    (repo_dir / "MODEL_IO.json").write_text(json.dumps(io_manifest, indent=2) + "\n", encoding="utf-8")
+
+
 def install_models(repo_dir: Path, cache_dir: Path) -> None:
     from huggingface_hub import hf_hub_download
 
@@ -221,12 +330,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Download rotation models and prepare a Triton model repository.")
     parser.add_argument("--repo-dir", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, default=Path(".model-cache"))
+    parser.add_argument("--source-dir", type=Path, help="Existing local model files to copy from when using --config-only.")
+    parser.add_argument("--config-only", action="store_true", help="Regenerate Triton configs from existing ONNX files.")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    install_models(args.repo_dir, args.cache_dir)
+    if args.config_only:
+        configure_existing_repository(args.repo_dir, source_dir=args.source_dir)
+    else:
+        install_models(args.repo_dir, args.cache_dir)
     return 0
 
 

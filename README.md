@@ -30,6 +30,25 @@ triton_model_repository/
 
 `MODEL_IO.json` records the exact ONNX input and output tensor names discovered during setup.
 
+## Regenerate Triton Configs Without Downloading
+
+If the ONNX files are already present, regenerate only Triton server configuration:
+
+```bash
+medical-doc-setup-models --repo-dir ./triton_model_repository --config-only
+```
+
+If the raw downloaded model files are in a separate folder, copy them into the Triton layout and generate configs without network access:
+
+```bash
+medical-doc-setup-models \
+  --repo-dir ./triton_model_repository \
+  --source-dir ./downloaded-models \
+  --config-only
+```
+
+This rewrites each model's `config.pbtxt`, `MODEL_IO.json`, and `MODEL_SOURCES.md` from local ONNX metadata. For Korean OCR, it also copies a local `dict.txt` when found.
+
 ## Run One Image
 
 ```bash
