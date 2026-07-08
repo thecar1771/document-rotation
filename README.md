@@ -49,6 +49,28 @@ medical-doc-setup-models \
 
 This rewrites each model's `config.pbtxt`, `MODEL_IO.json`, and `MODEL_SOURCES.md` from local ONNX metadata. For Korean OCR, it also copies a local `dict.txt` when found.
 
+## Write Default Triton Config Templates
+
+To create only the known per-model `config.pbtxt` structure without downloading models or inspecting ONNX files:
+
+```bash
+medical-doc-setup-models --repo-dir ./triton_model_repository --write-default-configs
+```
+
+This creates:
+
+```text
+triton_model_repository/
+  MODEL_IO.json
+  MODEL_SOURCES.md
+  orientation_deep_image/config.pbtxt
+  orientation_doctr_page/config.pbtxt
+  orientation_paddle_doc_ori/config.pbtxt
+  ocr_korean_rec/config.pbtxt
+```
+
+Then place each ONNX file at `<model_name>/1/model.onnx` before starting Triton.
+
 ## Run One Image
 
 ```bash

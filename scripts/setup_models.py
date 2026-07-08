@@ -50,6 +50,34 @@ ARTIFACTS = [
 ]
 
 
+DEFAULT_MODEL_IO = {
+    "orientation_deep_image": OnnxIo(
+        input_name="input",
+        input_shape=[-1, 3, 384, 384],
+        output_name="output",
+        output_shape=[-1, 4],
+    ),
+    "orientation_doctr_page": OnnxIo(
+        input_name="input",
+        input_shape=[-1, 3, 512, 512],
+        output_name="logits",
+        output_shape=[-1, 4],
+    ),
+    "orientation_paddle_doc_ori": OnnxIo(
+        input_name="x",
+        input_shape=[-1, 3, 224, 224],
+        output_name="fetch_name_0",
+        output_shape=[-1, 4],
+    ),
+    "ocr_korean_rec": OnnxIo(
+        input_name="x",
+        input_shape=[-1, 3, 48, -1],
+        output_name="fetch_name_0",
+        output_shape=[-1, -1, 11947],
+    ),
+}
+
+
 def resolve_repo_file(repo_id: str, requested: str) -> str:
     from huggingface_hub import list_repo_files
 
@@ -183,6 +211,38 @@ def write_repository_manifest(repo_dir: Path, artifacts: list[ModelArtifact]) ->
     (repo_dir / "MODEL_SOURCES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _io_manifest_entry(io: OnnxIo) -> dict[str, str | list[int]]:
+    return {
+        "input": io.input_name,
+        "output": io.output_name,
+        "input_shape": io.input_shape,
+        "output_shape": io.output_shape,
+    }
+
+
+def write_default_repository_configs(
+    repo_dir: Path,
+    artifacts: list[ModelArtifact] | None = None,
+) -> None:
+    selected_artifacts = artifacts or ARTIFACTS
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    io_manifest: dict[str, dict[str, str | list[int]]] = {}
+    for artifact in selected_artifacts:
+        io = DEFAULT_MODEL_IO[artifact.name]
+        (repo_dir / artifact.name / "1").mkdir(parents=True, exist_ok=True)
+        write_model_config(
+            repo_dir / artifact.name,
+            name=artifact.name,
+            input_name=io.input_name,
+            input_shape=io.input_shape,
+            output_name=io.output_name,
+            output_dims=io.output_shape,
+        )
+        io_manifest[artifact.name] = _io_manifest_entry(io)
+    write_repository_manifest(repo_dir, selected_artifacts)
+    (repo_dir / "MODEL_IO.json").write_text(json.dumps(io_manifest, indent=2) + "\n", encoding="utf-8")
+
+
 def find_existing_model_source(search_dir: Path, artifact: ModelArtifact) -> Path:
     candidates = [
         search_dir / artifact.name / "1" / "model.onnx",
@@ -278,10 +338,7 @@ def configure_existing_repository(
             output_dims=io.output_shape,
         )
         io_manifest[artifact.name] = {
-            "input": io.input_name,
-            "output": io.output_name,
-            "input_shape": io.input_shape,
-            "output_shape": io.output_shape,
+            **_io_manifest_entry(io),
         }
 
     dict_source = find_existing_dictionary_source(search_dirs)
@@ -313,10 +370,7 @@ def install_models(repo_dir: Path, cache_dir: Path) -> None:
             output_dims=io.output_shape,
         )
         io_manifest[artifact.name] = {
-            "input": io.input_name,
-            "output": io.output_name,
-            "input_shape": io.input_shape,
-            "output_shape": io.output_shape,
+            **_io_manifest_entry(io),
         }
         if artifact.name == "ocr_korean_rec":
             dict_file = resolve_dictionary_file(artifact.repo_id)
@@ -332,12 +386,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", type=Path, default=Path(".model-cache"))
     parser.add_argument("--source-dir", type=Path, help="Existing local model files to copy from when using --config-only.")
     parser.add_argument("--config-only", action="store_true", help="Regenerate Triton configs from existing ONNX files.")
+    parser.add_argument(
+        "--write-default-configs",
+        action="store_true",
+        help="Write known per-model Triton config.pbtxt files without ONNX files or downloads.",
+    )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    if args.config_only:
+    if args.write_default_configs:
+        write_default_repository_configs(args.repo_dir)
+    elif args.config_only:
         configure_existing_repository(args.repo_dir, source_dir=args.source_dir)
     else:
         install_models(args.repo_dir, args.cache_dir)

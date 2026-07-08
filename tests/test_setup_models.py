@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import onnx
 from onnx import TensorProto, helper
@@ -7,6 +8,7 @@ from scripts.setup_models import (
     ModelArtifact,
     configure_existing_repository,
     find_existing_model_source,
+    write_default_repository_configs,
     write_model_config,
     write_repository_manifest,
 )
@@ -82,3 +84,23 @@ def test_configure_existing_repository_rewrites_configs_without_downloading(tmp_
     manifest = (tmp_path / "MODEL_IO.json").read_text(encoding="utf-8")
     assert "deep_input" in manifest
     assert "ocr_output" in manifest
+
+
+def test_write_default_repository_configs_creates_static_triton_layout_without_onnx(tmp_path: Path):
+    write_default_repository_configs(tmp_path)
+
+    deep_config = (tmp_path / "orientation_deep_image" / "config.pbtxt").read_text(encoding="utf-8")
+    paddle_config = (tmp_path / "orientation_paddle_doc_ori" / "config.pbtxt").read_text(encoding="utf-8")
+    ocr_config = (tmp_path / "ocr_korean_rec" / "config.pbtxt").read_text(encoding="utf-8")
+    io_manifest = json.loads((tmp_path / "MODEL_IO.json").read_text(encoding="utf-8"))
+
+    assert 'name: "orientation_deep_image"' in deep_config
+    assert 'dims: [ 3, 384, 384 ]' in deep_config
+    assert 'name: "x"' in paddle_config
+    assert 'dims: [ 3, 224, 224 ]' in paddle_config
+    assert 'dims: [ 3, 48, -1 ]' in ocr_config
+    assert 'dims: [ -1, 11947 ]' in ocr_config
+    assert io_manifest["orientation_doctr_page"]["input_shape"] == [-1, 3, 512, 512]
+    assert io_manifest["ocr_korean_rec"]["output_shape"] == [-1, -1, 11947]
+    assert (tmp_path / "orientation_deep_image" / "1").is_dir()
+    assert (tmp_path / "ocr_korean_rec" / "1").is_dir()
