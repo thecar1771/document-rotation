@@ -23,6 +23,7 @@ test = ["pytest>=8.0"]
 [project.scripts]
 medical-doc-rotate = "medical_doc_rotation.cli:main"
 medical-doc-setup-models = "scripts.setup_models:main"
+medical-doc-benchmark-public-samples = "scripts.benchmark_public_samples:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]

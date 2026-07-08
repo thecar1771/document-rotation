@@ -5,6 +5,7 @@ from pathlib import Path
 
 from medical_doc_rotation.config import RotationConfig
 from medical_doc_rotation.pipeline import RotationPreprocessor
+from medical_doc_rotation.types import RotationResult
 from medical_doc_rotation.triton_client import (
     ModelTensorNames,
     TritonCropRecognizer,
@@ -28,6 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--validation-min-margin", type=float)
     parser.add_argument("--crops-per-candidate", type=int)
     parser.add_argument("--ocr-max-width", type=int)
+    parser.add_argument("--candidate-top-k", type=int)
+    parser.add_argument("--candidate-dedupe-degrees", type=float)
     return parser
 
 
@@ -51,6 +54,8 @@ def build_config(args: argparse.Namespace) -> RotationConfig:
         "validation_min_margin",
         "crops_per_candidate",
         "ocr_max_width",
+        "candidate_top_k",
+        "candidate_dedupe_degrees",
     ):
         value = getattr(args, name, None)
         if value is not None:
@@ -71,6 +76,29 @@ def read_model_io(path: Path) -> dict[str, ModelTensorNames]:
     }
 
 
+def format_trace_lines(result: RotationResult) -> list[str]:
+    lines = [
+        f"output={result.output_path} elapsed_ms={result.elapsed_ms:.1f}",
+    ]
+    for model_score in result.trace.model_scores:
+        ordered = model_score.ordered
+        detail = ",".join(f"{score.angle:.2f}:{score.score:.4f}" for score in ordered)
+        lines.append(f"model={model_score.model_name} scores={detail}")
+    candidate_text = ",".join(f"{candidate.angle:.2f}" for candidate in result.trace.candidate_angles)
+    lines.append(f"candidates={candidate_text}")
+    for score in sorted(result.trace.validation_scores, key=lambda item: item.score, reverse=True):
+        lines.append(
+            f"angle={score.angle:.2f} score={score.score:.3f} "
+            f"avg_conf={score.avg_confidence:.3f} recognized_ratio={score.recognized_ratio:.3f} "
+            f"recognized_chars={score.recognized_chars} broken_penalty={score.broken_token_penalty:.3f}"
+        )
+    lines.append(
+        f"final angle={result.decision.angle:.2f} rotate={result.decision.should_rotate} "
+        f"reason={result.decision.reason}"
+    )
+    return lines
+
+
 def main() -> int:
     args = build_parser().parse_args()
     config = build_config(args)
@@ -81,10 +109,8 @@ def main() -> int:
     recognizer = TritonCropRecognizer(client, config, read_alphabet(args.dict_path), model_io=model_io)
     preprocessor = RotationPreprocessor(orientation_client, recognizer, config)
     result = preprocessor.process(args.input, args.output)
-    print(
-        f"output={result.output_path} angle={result.decision.angle:.2f} "
-        f"rotate={result.decision.should_rotate} elapsed_ms={result.elapsed_ms:.1f}"
-    )
+    for line in format_trace_lines(result):
+        print(line)
     return 0
 
 

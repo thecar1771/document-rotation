@@ -18,7 +18,9 @@ class RotationConfig:
     min_score_margin: float = 0.20
     strong_zero_score: float = 0.88
     fine_angle_min_confidence: float = 0.55
-    max_candidates: int = 3
+    max_candidates: int = 12
+    candidate_top_k: int = 2
+    candidate_dedupe_degrees: float = 5.0
     normal_candidate_count: int = 2
     crops_per_candidate: int = 10
     validation_min_score: float = 0.50

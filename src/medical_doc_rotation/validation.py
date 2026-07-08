@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -7,20 +6,6 @@ from PIL import Image
 from medical_doc_rotation.geometry import select_evidence_crops
 from medical_doc_rotation.image_ops import rotate_image
 from medical_doc_rotation.types import AngleCandidate, ValidationScore
-
-ANCHOR_TERMS = (
-    "\uc9c4\ub8cc\ube44",
-    "\ubcf8\uc778\ubd80\ub2f4",
-    "\ub0a9\uc785",
-    "\uc601\uc218\uc99d",
-    "\uc138\ubd80\ub0b4\uc5ed",
-    "\ud569\uacc4",
-    "\uc57d\uad6d",
-    "\uc218\uc220",
-    "\uae08\uc561",
-)
-ANCHOR_PATTERN = re.compile("|".join(ANCHOR_TERMS))
-NUMERIC_PATTERN = re.compile(r"(\d{1,3}(,\d{3})+|\d{4}[.-]\d{1,2}[.-]\d{1,2}|\d{3}-\d{2}-\d{5})")
 
 
 @dataclass(frozen=True)
@@ -54,16 +39,16 @@ def score_candidate_crops(
         text = " ".join(item.text for item in flat)
         recognized_chars = sum(1 for char in text if char.isdigit() or "\uac00" <= char <= "\ud7a3")
         recognized_ratio = recognized_chars / max(1, len(text))
-        pattern_hits = len(ANCHOR_PATTERN.findall(text)) + len(NUMERIC_PATTERN.findall(text))
         broken_penalty = sum(1 for token in text.split() if len(token) == 1) / max(1, len(text.split()))
-        score = avg_conf + recognized_ratio + pattern_hits * 0.25 - broken_penalty * 0.5
+        length_score = min(1.0, recognized_chars / 80.0)
+        score = avg_conf + recognized_ratio + length_score - broken_penalty * 0.5
         scores.append(
             ValidationScore(
                 angle=candidate.angle,
                 score=score,
                 avg_confidence=avg_conf,
                 recognized_ratio=recognized_ratio,
-                pattern_hits=pattern_hits,
+                recognized_chars=recognized_chars,
                 broken_token_penalty=broken_penalty,
             )
         )

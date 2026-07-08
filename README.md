@@ -1,6 +1,6 @@
 # Medical Document Rotation
 
-Python preprocessor for medical document image rotation. It estimates a conservative correction angle, rotates the original image, saves the result, and passes that saved image to an existing downstream process.
+Python preprocessor for medical document image rotation. Orientation models propose candidate angles, Korean OCR recognition scores each candidate, the best recognized candidate is applied to the original image, and the saved image is passed to an existing downstream process.
 
 ## Install
 
@@ -36,25 +36,58 @@ triton_model_repository/
 medical-doc-rotate input.jpg output.jpg --triton-url localhost:8000 --dict-path ./triton_model_repository/ocr_korean_rec/dict.txt --model-io-path ./triton_model_repository/MODEL_IO.json
 ```
 
+The command prints a trace for debugging:
+
+```text
+model=deep_image scores=90.00:0.9123,270.00:0.0412,...
+candidates=90.00,270.00,0.00,180.00
+angle=90.00 score=2.143 avg_conf=0.921 recognized_ratio=0.742 recognized_chars=84 broken_penalty=0.000
+final angle=90.00 rotate=True reason=recognition_best
+```
+
 ## Runtime Tuning
 
-For a more aggressive operating point when rotated documents are being passed through unchanged:
+Candidate generation is intentionally simple:
+
+- take the top orientation angles from each model
+- add the inverse angle for each model angle
+- add fine-angle and inverse fine-angle when OpenCV confidence is high
+- deduplicate nearby angles
+- pick the candidate with the highest OCR recognition score
+
+To widen the search when model direction is unstable:
 
 ```bash
 medical-doc-rotate input.jpg output.jpg \
   --triton-url localhost:8000 \
   --dict-path ./triton_model_repository/ocr_korean_rec/dict.txt \
   --model-io-path ./triton_model_repository/MODEL_IO.json \
-  --min-ensemble-score 0.75 \
-  --min-score-margin 0.10 \
-  --validation-min-score 0.40 \
-  --validation-min-margin 0.08
+  --candidate-top-k 3 \
+  --candidate-dedupe-degrees 3 \
+  --crops-per-candidate 12 \
+  --ocr-max-width 512
 ```
-
-For stronger protection when upright documents are being rotated incorrectly, raise `--min-ensemble-score` and `--min-score-margin`, or lower `--strong-zero-score` so a confident zero-degree model vote blocks rotation sooner.
 
 Use `--ocr-max-width` to trade validation accuracy and latency. Lower values such as `384` or `512` are faster; higher values preserve more long text in OCR crops.
 
+## Benchmark Public Samples
+
+Place public or anonymized upright samples in a folder. The benchmark creates synthetic rotations, runs the full Triton-backed pipeline, and checks whether the predicted correction matches the known inverse angle.
+
+```bash
+medical-doc-benchmark-public-samples \
+  --samples-dir ./public-medical-samples \
+  --work-dir ./benchmark-work \
+  --triton-url localhost:8000 \
+  --dict-path ./triton_model_repository/ocr_korean_rec/dict.txt \
+  --model-io-path ./triton_model_repository/MODEL_IO.json \
+  --limit 50 \
+  --rotations 0,90,180,270 \
+  --json-output ./benchmark-work/results.json
+```
+
+The script exits with code `0` only when every generated case passes.
+
 ## Safety Policy
 
-The default decision is no rotation. A non-zero rotation is applied only when coarse orientation models, margin thresholds, agreement rules, and OCR crop validation support it.
+This repository does not scrape random real medical documents. Use public, synthetic, or anonymized samples for benchmarks.

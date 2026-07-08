@@ -1,11 +1,10 @@
 from medical_doc_rotation.config import RotationConfig
 from medical_doc_rotation.decision import (
-    decide_final_angle,
+    build_recognition_candidates,
+    decide_by_recognition,
     fuse_orientation_scores,
-    select_candidates,
 )
-from medical_doc_rotation.types import AngleScore, OrientationScores
-from medical_doc_rotation.types import FineAngleEstimate, ValidationScore
+from medical_doc_rotation.types import AngleScore, FineAngleEstimate, OrientationScores, ValidationScore
 
 
 def test_default_thresholds_are_conservative():
@@ -13,7 +12,8 @@ def test_default_thresholds_are_conservative():
 
     assert config.min_ensemble_score == 0.85
     assert config.min_score_margin == 0.20
-    assert config.max_candidates == 3
+    assert config.max_candidates == 12
+    assert config.candidate_top_k == 2
     assert config.default_angle == 0.0
 
 
@@ -54,59 +54,45 @@ def test_fuse_orientation_scores_uses_weights():
     assert fused.best.score > 0.70
 
 
-def test_select_candidates_keeps_90_and_270_conflict():
-    candidates = select_candidates(
-        fused=make_scores("fused", 90.0, 0.60),
-        model_scores=[make_scores("a", 90.0), make_scores("b", 270.0), make_scores("c", 90.0)],
-        fine_angle=FineAngleEstimate(angle=2.0, confidence=0.8),
-        config=RotationConfig(),
+def test_build_recognition_candidates_adds_inverse_angles_and_deduplicates():
+    candidates = build_recognition_candidates(
+        model_scores=[
+            OrientationScores("deep_image", [AngleScore(90.0, 0.91), AngleScore(0.0, 0.05)]),
+            OrientationScores("paddle_doc_ori", [AngleScore(88.0, 0.87), AngleScore(270.0, 0.12)]),
+            OrientationScores("doctr_page", [AngleScore(195.0, 0.77)]),
+        ],
+        fine_angle=FineAngleEstimate(angle=4.0, confidence=0.9),
+        config=RotationConfig(candidate_top_k=1, candidate_dedupe_degrees=5.0, max_candidates=12),
     )
 
-    angles = {round(candidate.angle) % 360 for candidate in candidates}
-    assert 92 in angles or 90 in angles
-    assert 272 in angles or 270 in angles
+    angles = [round(candidate.angle) % 360 for candidate in candidates]
+
+    assert angles == [90, 270, 195, 165, 4, 356]
 
 
-def test_decider_keeps_zero_when_score_is_ambiguous():
-    decision = decide_final_angle(
-        fused=make_scores("fused", 90.0, 0.60),
-        model_scores=[make_scores("a", 90.0), make_scores("b", 270.0), make_scores("c", 90.0)],
-        fine_angle=FineAngleEstimate(angle=0.0, confidence=0.0),
-        validation_scores=[],
+def test_decide_by_recognition_selects_highest_ocr_score_even_for_zero():
+    decision = decide_by_recognition(
+        validation_scores=[
+            ValidationScore(90.0, 1.2, 0.8, 0.6, 12, 0.1),
+            ValidationScore(0.0, 1.6, 0.9, 0.8, 20, 0.0),
+        ],
         config=RotationConfig(),
     )
 
     assert decision.angle == 0.0
     assert decision.should_rotate is False
+    assert decision.reason == "recognition_best"
 
 
-def test_decider_accepts_supported_high_confidence_non_zero():
-    validation = [ValidationScore(90.0, 1.4, 0.9, 0.8, 3, 0.0)]
-    decision = decide_final_angle(
-        fused=make_scores("fused", 90.0, 0.94),
-        model_scores=[make_scores("a", 90.0), make_scores("b", 90.0), make_scores("c", 0.0, 0.30)],
-        fine_angle=FineAngleEstimate(angle=2.0, confidence=0.8),
-        validation_scores=validation,
+def test_decide_by_recognition_selects_highest_ocr_score_for_non_zero():
+    decision = decide_by_recognition(
+        validation_scores=[
+            ValidationScore(90.0, 2.2, 0.8, 0.6, 12, 0.1),
+            ValidationScore(270.0, 1.6, 0.9, 0.8, 20, 0.0),
+        ],
         config=RotationConfig(),
     )
 
-    assert round(decision.angle, 1) == 92.0
+    assert decision.angle == 90.0
     assert decision.should_rotate is True
-
-
-def test_decider_uses_configurable_validation_thresholds():
-    validation = [
-        ValidationScore(90.0, 0.58, 0.9, 0.8, 3, 0.0),
-        ValidationScore(180.0, 0.42, 0.9, 0.8, 3, 0.0),
-    ]
-
-    decision = decide_final_angle(
-        fused=make_scores("fused", 90.0, 0.94),
-        model_scores=[make_scores("a", 90.0), make_scores("b", 90.0), make_scores("c", 90.0)],
-        fine_angle=FineAngleEstimate(angle=0.0, confidence=0.0),
-        validation_scores=validation,
-        config=RotationConfig(validation_min_score=0.60, validation_min_margin=0.20),
-    )
-
-    assert decision.should_rotate is False
-    assert decision.reason == "validation_reject"
+    assert decision.reason == "recognition_best"

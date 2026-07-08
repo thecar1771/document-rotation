@@ -45,6 +45,42 @@ def _apply_fine_angle(coarse_angle: float, fine_angle: FineAngleEstimate, config
     return normalize_angle(coarse_angle)
 
 
+def _append_unique_candidate(
+    candidates: list[AngleCandidate],
+    angle: float,
+    reason: str,
+    config: RotationConfig,
+) -> None:
+    normalized = normalize_angle(angle)
+    if any(angular_distance(existing.angle, normalized) <= config.candidate_dedupe_degrees for existing in candidates):
+        return
+    if len(candidates) < config.max_candidates:
+        candidates.append(AngleCandidate(angle=normalized, reason=reason))
+
+
+def build_recognition_candidates(
+    model_scores: list[OrientationScores],
+    fine_angle: FineAngleEstimate,
+    config: RotationConfig,
+) -> list[AngleCandidate]:
+    candidates: list[AngleCandidate] = []
+    for model_score in model_scores:
+        for score in model_score.ordered[: config.candidate_top_k]:
+            angle = normalize_angle(score.angle)
+            _append_unique_candidate(candidates, angle, f"{model_score.model_name}:{angle:.2f}", config)
+            inverse = normalize_angle(-angle)
+            _append_unique_candidate(candidates, inverse, f"inverse:{model_score.model_name}:{angle:.2f}", config)
+
+    if fine_angle.confidence >= config.fine_angle_min_confidence:
+        fine = normalize_angle(fine_angle.angle)
+        _append_unique_candidate(candidates, fine, "fine_angle", config)
+        _append_unique_candidate(candidates, normalize_angle(-fine), "inverse:fine_angle", config)
+
+    if not candidates:
+        candidates.append(AngleCandidate(angle=config.default_angle, reason="default"))
+    return candidates
+
+
 def select_candidates(
     fused: OrientationScores,
     model_scores: list[OrientationScores],
@@ -94,6 +130,14 @@ def _validation_support(angle: float, validation_scores: list[ValidationScore], 
 
 def _zero_is_strong(model_scores: list[OrientationScores], config: RotationConfig) -> bool:
     return any(score.best.angle == 0.0 and score.best.score >= config.strong_zero_score for score in model_scores)
+
+
+def decide_by_recognition(validation_scores: list[ValidationScore], config: RotationConfig) -> RotationDecision:
+    if not validation_scores:
+        return RotationDecision(angle=config.default_angle, should_rotate=False, reason="no_validation_scores")
+    best = max(validation_scores, key=lambda item: item.score)
+    angle = normalize_angle(best.angle)
+    return RotationDecision(angle=angle, should_rotate=round(angle) % 360 != 0, reason="recognition_best")
 
 
 def decide_final_angle(

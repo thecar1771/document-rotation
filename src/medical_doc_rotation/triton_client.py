@@ -78,12 +78,81 @@ def np_to_triton_dtype(dtype: np.dtype) -> str:
 
 
 ANGLE_ORDER = [0.0, 90.0, 180.0, 270.0]
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+DOCTR_PAGE_ORIENTATION_MEAN = np.array([0.694, 0.695, 0.693], dtype=np.float32)
+DOCTR_PAGE_ORIENTATION_STD = np.array([0.299, 0.296, 0.301], dtype=np.float32)
 
 
 def _image_to_nchw(image: Image.Image, size: tuple[int, int]) -> np.ndarray:
     resized = image.resize(size, Image.Resampling.BILINEAR).convert("RGB")
     array = np.asarray(resized).astype(np.float32) / 255.0
     return np.transpose(array, (2, 0, 1))[None, ...]
+
+
+def _normalize(array: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    return (array - mean.reshape(1, 1, 3)) / std.reshape(1, 1, 3)
+
+
+def _array_to_nchw(array: np.ndarray) -> np.ndarray:
+    return np.transpose(array.astype(np.float32), (2, 0, 1))[None, ...]
+
+
+def _resize_shorter_side(image: Image.Image, shorter_side: int) -> Image.Image:
+    width, height = image.size
+    scale = shorter_side / max(1, min(width, height))
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    return image.resize(size, Image.Resampling.BILINEAR)
+
+
+def _center_crop(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    width, height = image.size
+    crop_width, crop_height = size
+    left = max(0, (width - crop_width) // 2)
+    top = max(0, (height - crop_height) // 2)
+    return image.crop((left, top, left + crop_width, top + crop_height))
+
+
+def _resize_with_symmetric_pad(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    width, height = image.size
+    target_width, target_height = size
+    scale = min(target_width / max(1, width), target_height / max(1, height))
+    resized_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    resized = image.resize(resized_size, Image.Resampling.BILINEAR).convert("RGB")
+    canvas = Image.new("RGB", size, "white")
+    offset = ((target_width - resized.width) // 2, (target_height - resized.height) // 2)
+    canvas.paste(resized, offset)
+    return canvas
+
+
+def _preprocess_deep_image(image: Image.Image, size: tuple[int, int]) -> np.ndarray:
+    shorter_side = max(size) + 32
+    resized = _resize_shorter_side(image.convert("RGB"), shorter_side)
+    cropped = _center_crop(resized, size)
+    array = np.asarray(cropped).astype(np.float32) / 255.0
+    return _array_to_nchw(_normalize(array, IMAGENET_MEAN, IMAGENET_STD))
+
+
+def _preprocess_paddle_doc_ori(image: Image.Image, size: tuple[int, int]) -> np.ndarray:
+    resized = image.resize(size, Image.Resampling.BILINEAR).convert("RGB")
+    array = np.asarray(resized).astype(np.float32) / 255.0
+    return _array_to_nchw(_normalize(array, IMAGENET_MEAN, IMAGENET_STD))
+
+
+def _preprocess_doctr_page(image: Image.Image, size: tuple[int, int]) -> np.ndarray:
+    resized = _resize_with_symmetric_pad(image.convert("RGB"), size)
+    array = np.asarray(resized).astype(np.float32) / 255.0
+    return _array_to_nchw(_normalize(array, DOCTR_PAGE_ORIENTATION_MEAN, DOCTR_PAGE_ORIENTATION_STD))
+
+
+def _preprocess_orientation_image(logical_name: str, image: Image.Image, tensor_names: ModelTensorNames) -> np.ndarray:
+    if logical_name == "deep_image":
+        return _preprocess_deep_image(image, _image_size_from_shape(tensor_names, (384, 384)))
+    if logical_name == "paddle_doc_ori":
+        return _preprocess_paddle_doc_ori(image, _image_size_from_shape(tensor_names, (224, 224)))
+    if logical_name == "doctr_page":
+        return _preprocess_doctr_page(image, _image_size_from_shape(tensor_names, (512, 512)))
+    return _image_to_nchw(image, _image_size_from_shape(tensor_names, (512, 512)))
 
 
 def _image_size_from_shape(
@@ -141,7 +210,7 @@ class TritonOrientationClient:
         results: list[OrientationScores] = []
         for logical_name, model_name in model_map.items():
             tensor_names = self.model_io.get(model_name, ModelTensorNames(input="input", output="probabilities"))
-            payload = _image_to_nchw(image, _image_size_from_shape(tensor_names, (512, 512)))
+            payload = _preprocess_orientation_image(logical_name, image, tensor_names)
             response = self.client.infer(
                 model_name=model_name,
                 inputs={tensor_names.input: payload},

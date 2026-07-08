@@ -47,7 +47,7 @@ class ValidationScore:
     score: float
     avg_confidence: float
     recognized_ratio: float
-    pattern_hits: int
+    recognized_chars: int
     broken_token_penalty: float
 
 
@@ -59,8 +59,16 @@ class RotationDecision:
 
 
 @dataclass(frozen=True)
+class RotationTrace:
+    model_scores: list[OrientationScores]
+    candidate_angles: list[AngleCandidate]
+    validation_scores: list[ValidationScore]
+
+
+@dataclass(frozen=True)
 class RotationResult:
     input_path: Path
     output_path: Path
     decision: RotationDecision
     elapsed_ms: float
+    trace: RotationTrace
