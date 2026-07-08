@@ -39,13 +39,13 @@ def rotate_image(
     if normalized == 0:
         return image.copy()
     if normalized == 90:
-        return image.transpose(Image.Transpose.ROTATE_90)
+        return image.transpose(Image.Transpose.ROTATE_270)
     if normalized == 180:
         return image.transpose(Image.Transpose.ROTATE_180)
     if normalized == 270:
-        return image.transpose(Image.Transpose.ROTATE_270)
+        return image.transpose(Image.Transpose.ROTATE_90)
     return image.rotate(
-        correction_angle,
+        -correction_angle,
         expand=True,
         fillcolor=fill_color,
         resample=Image.Resampling.BICUBIC,

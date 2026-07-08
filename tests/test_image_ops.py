@@ -21,6 +21,16 @@ def test_rotate_right_angle_swaps_width_and_height():
     assert rotated.size == (100, 500)
 
 
+def test_rotate_positive_right_angle_is_clockwise_correction():
+    image = Image.new("RGB", (3, 2), "white")
+    image.putpixel((0, 0), (255, 0, 0))
+
+    rotated = rotate_image(image, 90.0)
+
+    assert rotated.size == (2, 3)
+    assert rotated.getpixel((1, 0)) == (255, 0, 0)
+
+
 def test_rotate_arbitrary_angle_expands_output():
     image = Image.new("RGB", (100, 100), "white")
 

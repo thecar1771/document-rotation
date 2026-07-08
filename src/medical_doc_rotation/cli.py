@@ -1,5 +1,6 @@
 import argparse
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from medical_doc_rotation.config import RotationConfig
@@ -19,11 +20,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--triton-url", default="localhost:8000")
     parser.add_argument("--dict-path", type=Path, required=True)
     parser.add_argument("--model-io-path", type=Path)
+    parser.add_argument("--min-ensemble-score", type=float)
+    parser.add_argument("--min-score-margin", type=float)
+    parser.add_argument("--strong-zero-score", type=float)
+    parser.add_argument("--fine-angle-min-confidence", type=float)
+    parser.add_argument("--validation-min-score", type=float)
+    parser.add_argument("--validation-min-margin", type=float)
+    parser.add_argument("--crops-per-candidate", type=int)
+    parser.add_argument("--ocr-max-width", type=int)
     return parser
 
 
 def read_alphabet(path: Path) -> list[str]:
-    return [""] + [line.strip("\n") for line in path.read_text(encoding="utf-8").splitlines()]
+    tokens = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    if " " not in tokens:
+        tokens.append(" ")
+    tokens.append("")
+    return tokens
+
+
+def build_config(args: argparse.Namespace) -> RotationConfig:
+    config = RotationConfig()
+    overrides = {}
+    for name in (
+        "min_ensemble_score",
+        "min_score_margin",
+        "strong_zero_score",
+        "fine_angle_min_confidence",
+        "validation_min_score",
+        "validation_min_margin",
+        "crops_per_candidate",
+        "ocr_max_width",
+    ):
+        value = getattr(args, name, None)
+        if value is not None:
+            overrides[name] = value
+    return replace(config, **overrides)
 
 
 def read_model_io(path: Path) -> dict[str, ModelTensorNames]:
@@ -41,7 +73,7 @@ def read_model_io(path: Path) -> dict[str, ModelTensorNames]:
 
 def main() -> int:
     args = build_parser().parse_args()
-    config = RotationConfig()
+    config = build_config(args)
     client = TritonHttpClient(args.triton_url)
     model_io_path = args.model_io_path or args.dict_path.parent.parent / "MODEL_IO.json"
     model_io = read_model_io(model_io_path)

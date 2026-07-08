@@ -33,7 +33,7 @@ def estimate_fine_angle(image: Image.Image) -> FineAngleEstimate:
         return FineAngleEstimate(angle=0.0, confidence=0.0)
 
     weighted_angles: list[tuple[float, float]] = []
-    for line in lines[:, 0]:
+    for line in np.asarray(lines).reshape(-1, 4):
         x1, y1, x2, y2 = map(float, line)
         length = math.hypot(x2 - x1, y2 - y1)
         if length < 20:
@@ -53,7 +53,7 @@ def estimate_fine_angle(image: Image.Image) -> FineAngleEstimate:
         0.0,
         1.0 - min(1.0, math.sqrt(variance) / 15.0),
     )
-    return FineAngleEstimate(angle=mean_angle, confidence=confidence)
+    return FineAngleEstimate(angle=-mean_angle, confidence=confidence)
 
 
 def select_evidence_crops(image: Image.Image, count: int) -> list[tuple[int, int, int, int]]:

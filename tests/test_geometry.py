@@ -17,7 +17,7 @@ def test_estimate_fine_angle_returns_correction_for_slanted_lines():
     estimate = estimate_fine_angle(image)
 
     assert estimate.confidence > 0.2
-    assert -12.0 < estimate.angle < -2.0
+    assert 2.0 < estimate.angle < 12.0
 
 
 def test_select_evidence_crops_is_deterministic_and_bounded():

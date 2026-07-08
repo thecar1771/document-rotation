@@ -7,8 +7,8 @@ from medical_doc_rotation.validation import OcrRecognition, score_candidate_crop
 class FakeRecognizer:
     def recognize(self, crops):
         return [
-            [OcrRecognition(text="진료비 12,000", confidence=0.91)],
-            [OcrRecognition(text="합계 12,000", confidence=0.88)],
+            [OcrRecognition(text="\uc9c4\ub8cc\ube44 12,000", confidence=0.91)],
+            [OcrRecognition(text="\ud569\uacc4 12,000", confidence=0.88)],
         ][: len(crops)]
 
 

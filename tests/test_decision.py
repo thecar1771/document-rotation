@@ -58,13 +58,13 @@ def test_select_candidates_keeps_90_and_270_conflict():
     candidates = select_candidates(
         fused=make_scores("fused", 90.0, 0.60),
         model_scores=[make_scores("a", 90.0), make_scores("b", 270.0), make_scores("c", 90.0)],
-        fine_angle=FineAngleEstimate(angle=-2.0, confidence=0.8),
+        fine_angle=FineAngleEstimate(angle=2.0, confidence=0.8),
         config=RotationConfig(),
     )
 
     angles = {round(candidate.angle) % 360 for candidate in candidates}
-    assert 88 in angles or 90 in angles
-    assert 268 in angles or 270 in angles
+    assert 92 in angles or 90 in angles
+    assert 272 in angles or 270 in angles
 
 
 def test_decider_keeps_zero_when_score_is_ambiguous():
@@ -85,10 +85,28 @@ def test_decider_accepts_supported_high_confidence_non_zero():
     decision = decide_final_angle(
         fused=make_scores("fused", 90.0, 0.94),
         model_scores=[make_scores("a", 90.0), make_scores("b", 90.0), make_scores("c", 0.0, 0.30)],
-        fine_angle=FineAngleEstimate(angle=-2.0, confidence=0.8),
+        fine_angle=FineAngleEstimate(angle=2.0, confidence=0.8),
         validation_scores=validation,
         config=RotationConfig(),
     )
 
-    assert round(decision.angle, 1) == 88.0
+    assert round(decision.angle, 1) == 92.0
     assert decision.should_rotate is True
+
+
+def test_decider_uses_configurable_validation_thresholds():
+    validation = [
+        ValidationScore(90.0, 0.58, 0.9, 0.8, 3, 0.0),
+        ValidationScore(180.0, 0.42, 0.9, 0.8, 3, 0.0),
+    ]
+
+    decision = decide_final_angle(
+        fused=make_scores("fused", 90.0, 0.94),
+        model_scores=[make_scores("a", 90.0), make_scores("b", 90.0), make_scores("c", 90.0)],
+        fine_angle=FineAngleEstimate(angle=0.0, confidence=0.0),
+        validation_scores=validation,
+        config=RotationConfig(validation_min_score=0.60, validation_min_margin=0.20),
+    )
+
+    assert decision.should_rotate is False
+    assert decision.reason == "validation_reject"

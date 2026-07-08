@@ -36,6 +36,25 @@ triton_model_repository/
 medical-doc-rotate input.jpg output.jpg --triton-url localhost:8000 --dict-path ./triton_model_repository/ocr_korean_rec/dict.txt --model-io-path ./triton_model_repository/MODEL_IO.json
 ```
 
+## Runtime Tuning
+
+For a more aggressive operating point when rotated documents are being passed through unchanged:
+
+```bash
+medical-doc-rotate input.jpg output.jpg \
+  --triton-url localhost:8000 \
+  --dict-path ./triton_model_repository/ocr_korean_rec/dict.txt \
+  --model-io-path ./triton_model_repository/MODEL_IO.json \
+  --min-ensemble-score 0.75 \
+  --min-score-margin 0.10 \
+  --validation-min-score 0.40 \
+  --validation-min-margin 0.08
+```
+
+For stronger protection when upright documents are being rotated incorrectly, raise `--min-ensemble-score` and `--min-score-margin`, or lower `--strong-zero-score` so a confident zero-degree model vote blocks rotation sooner.
+
+Use `--ocr-max-width` to trade validation accuracy and latency. Lower values such as `384` or `512` are faster; higher values preserve more long text in OCR crops.
+
 ## Safety Policy
 
 The default decision is no rotation. A non-zero rotation is applied only when coarse orientation models, margin thresholds, agreement rules, and OCR crop validation support it.

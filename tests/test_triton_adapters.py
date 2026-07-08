@@ -25,7 +25,7 @@ def test_triton_orientation_client_returns_three_model_scores():
 
 
 def test_triton_crop_recognizer_returns_one_result_per_crop():
-    recognizer = TritonCropRecognizer(FakeTritonClient(), RotationConfig(), alphabet=["", "가"])
+    recognizer = TritonCropRecognizer(FakeTritonClient(), RotationConfig(), alphabet=["A", "B", " ", ""])
 
     results = recognizer.recognize([Image.new("RGB", (120, 32), "white")])
 
@@ -58,7 +58,7 @@ def test_triton_adapters_use_model_io_mapping():
         "ocr_korean_rec": ModelTensorNames(input="x", output="fetch_name_0"),
     }
     orientation = TritonOrientationClient(fake, config, model_io=model_io)
-    recognizer = TritonCropRecognizer(fake, config, alphabet=["", "가"], model_io=model_io)
+    recognizer = TritonCropRecognizer(fake, config, alphabet=["A", "B", " ", ""], model_io=model_io)
 
     orientation.orientation_scores(Image.new("RGB", (512, 512), "white"))
     recognizer.recognize([Image.new("RGB", (120, 32), "white")])
@@ -92,7 +92,7 @@ def test_triton_adapters_use_model_specific_input_shapes():
     }
 
     orientation = TritonOrientationClient(fake, config, model_io=model_io)
-    recognizer = TritonCropRecognizer(fake, config, alphabet=["", "가"], model_io=model_io)
+    recognizer = TritonCropRecognizer(fake, config, alphabet=["A", "B", " ", ""], model_io=model_io)
     orientation.orientation_scores(Image.new("RGB", (900, 700), "white"))
     recognizer.recognize([Image.new("RGB", (120, 32), "white")])
 
@@ -117,3 +117,56 @@ def test_orientation_client_normalizes_logits_to_probabilities():
 
     assert scores[0].best.angle == 90.0
     assert 0.80 < scores[0].best.score < 1.0
+
+
+class CtcFakeTritonClient:
+    def infer(self, model_name, inputs, outputs, timeout_ms):
+        logits = np.full((1, 5, 4), -10.0, dtype=np.float32)
+        for timestep, index in enumerate([0, 0, 3, 1, 1]):
+            logits[0, timestep, index] = 10.0
+        return {outputs[0]: logits}
+
+    def is_model_ready(self, model_name):
+        return True
+
+
+def test_triton_crop_recognizer_collapses_ctc_duplicates_and_removes_blank():
+    recognizer = TritonCropRecognizer(CtcFakeTritonClient(), RotationConfig(), alphabet=["A", "B", " ", ""])
+
+    results = recognizer.recognize([Image.new("RGB", (120, 32), "white")])
+
+    assert results[0][0].text == "AB"
+    assert results[0][0].confidence > 0.99
+
+
+class DynamicWidthFakeTritonClient:
+    def __init__(self):
+        self.batch_shape = None
+
+    def infer(self, model_name, inputs, outputs, timeout_ms):
+        batch = next(iter(inputs.values()))
+        self.batch_shape = batch.shape
+        logits = np.zeros((batch.shape[0], 2, 4), dtype=np.float32)
+        logits[:, :, 3] = 10.0
+        return {outputs[0]: logits}
+
+    def is_model_ready(self, model_name):
+        return True
+
+
+def test_triton_crop_recognizer_preserves_aspect_ratio_for_dynamic_width_input():
+    fake = DynamicWidthFakeTritonClient()
+    config = RotationConfig(ocr_max_width=512)
+    model_io = {
+        "ocr_korean_rec": ModelTensorNames(input="x", output="fetch_name_0", input_shape=[-1, 3, 48, -1])
+    }
+    recognizer = TritonCropRecognizer(fake, config, alphabet=["A", "B", " ", ""], model_io=model_io)
+
+    recognizer.recognize(
+        [
+            Image.new("RGB", (48, 48), "white"),
+            Image.new("RGB", (640, 48), "white"),
+        ]
+    )
+
+    assert fake.batch_shape == (2, 3, 48, 512)

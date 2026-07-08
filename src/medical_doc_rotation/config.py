@@ -21,6 +21,9 @@ class RotationConfig:
     max_candidates: int = 3
     normal_candidate_count: int = 2
     crops_per_candidate: int = 10
+    validation_min_score: float = 0.50
+    validation_min_margin: float = 0.15
+    ocr_max_width: int = 640
     ensemble_timeout_ms: int = 250
     validation_timeout_ms: int = 350
     model_names: TritonModelNames = field(default_factory=TritonModelNames)

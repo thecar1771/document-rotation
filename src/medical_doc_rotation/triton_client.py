@@ -106,6 +106,21 @@ def _image_size_from_shape(
     return default
 
 
+def _input_width_is_dynamic(tensor_names: ModelTensorNames) -> bool:
+    if not tensor_names.input_shape:
+        return False
+    dims = tensor_names.input_shape
+    if len(dims) >= 4 and dims[0] in {-1, 0, 1}:
+        dims = dims[1:]
+    return len(dims) >= 3 and dims[2] <= 0
+
+
+def _image_to_chw(image: Image.Image, size: tuple[int, int]) -> np.ndarray:
+    resized = image.resize(size, Image.Resampling.BILINEAR).convert("RGB")
+    array = np.asarray(resized).astype(np.float32) / 255.0
+    return np.transpose(array, (2, 0, 1))
+
+
 class TritonOrientationClient:
     def __init__(
         self,
@@ -166,8 +181,7 @@ class TritonCropRecognizer:
             self.config.model_names.korean_rec,
             ModelTensorNames(input="input", output="logits"),
         )
-        size = _image_size_from_shape(tensor_names, (160, 32))
-        batch = np.concatenate([_image_to_nchw(crop, size) for crop in crops], axis=0)
+        batch = self._prepare_ocr_batch(crops, tensor_names)
         response = self.client.infer(
             model_name=self.config.model_names.korean_rec,
             inputs={tensor_names.input: batch},
@@ -177,16 +191,48 @@ class TritonCropRecognizer:
         logits = response[tensor_names.output]
         return [self._decode(row) for row in logits]
 
+    def _prepare_ocr_batch(self, crops: list[Image.Image], tensor_names: ModelTensorNames) -> np.ndarray:
+        size = _image_size_from_shape(tensor_names, (160, 32))
+        target_height = size[1]
+        if not _input_width_is_dynamic(tensor_names):
+            return np.stack([_image_to_chw(crop, size) for crop in crops], axis=0)
+
+        max_width = max(8, self.config.ocr_max_width)
+        resized: list[np.ndarray] = []
+        widths: list[int] = []
+        for crop in crops:
+            scale = target_height / max(1, crop.height)
+            width = min(max_width, max(8, round(crop.width * scale)))
+            resized_crop = _image_to_chw(crop, (width, target_height))
+            resized.append(resized_crop)
+            widths.append(width)
+
+        batch_width = min(max_width, max(widths))
+        batch = np.ones((len(resized), 3, target_height, batch_width), dtype=np.float32)
+        for index, item in enumerate(resized):
+            width = min(item.shape[-1], batch_width)
+            batch[index, :, :, :width] = item[:, :, :width]
+        return batch
+
     def _decode(self, logits: np.ndarray) -> list[OcrRecognition]:
         indices = np.argmax(logits, axis=-1)
         confidences = np.max(_softmax(logits), axis=-1)
-        chars = [
-            self.alphabet[index]
-            for index in indices
-            if 0 <= index < len(self.alphabet) and self.alphabet[index]
-        ]
+        blank_index = len(self.alphabet) - 1
+        chars: list[str] = []
+        kept_confidences: list[float] = []
+        previous_index: int | None = None
+        for index, confidence in zip(indices, confidences):
+            current_index = int(index)
+            if current_index == previous_index:
+                continue
+            previous_index = current_index
+            if current_index == blank_index:
+                continue
+            if 0 <= current_index < len(self.alphabet) and self.alphabet[current_index]:
+                chars.append(self.alphabet[current_index])
+                kept_confidences.append(float(confidence))
         text = "".join(chars)
-        confidence = float(np.mean(confidences)) if len(confidences) else 0.0
+        confidence = float(np.mean(kept_confidences)) if kept_confidences else 0.0
         return [OcrRecognition(text=text, confidence=confidence)]
 
 

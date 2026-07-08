@@ -8,7 +8,18 @@ from medical_doc_rotation.geometry import select_evidence_crops
 from medical_doc_rotation.image_ops import rotate_image
 from medical_doc_rotation.types import AngleCandidate, ValidationScore
 
-ANCHOR_PATTERN = re.compile(r"(진료비|본인부담|납입|영수증|세부내역|합계)")
+ANCHOR_TERMS = (
+    "\uc9c4\ub8cc\ube44",
+    "\ubcf8\uc778\ubd80\ub2f4",
+    "\ub0a9\uc785",
+    "\uc601\uc218\uc99d",
+    "\uc138\ubd80\ub0b4\uc5ed",
+    "\ud569\uacc4",
+    "\uc57d\uad6d",
+    "\uc218\uc220",
+    "\uae08\uc561",
+)
+ANCHOR_PATTERN = re.compile("|".join(ANCHOR_TERMS))
 NUMERIC_PATTERN = re.compile(r"(\d{1,3}(,\d{3})+|\d{4}[.-]\d{1,2}[.-]\d{1,2}|\d{3}-\d{2}-\d{5})")
 
 

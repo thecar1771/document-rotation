@@ -78,16 +78,18 @@ def _agreement_count(model_scores: list[OrientationScores], angle: float) -> int
     return sum(1 for score in model_scores if round(normalize_angle(score.best.angle)) % 360 == target)
 
 
-def _validation_support(angle: float, validation_scores: list[ValidationScore]) -> bool:
+def _validation_support(angle: float, validation_scores: list[ValidationScore], config: RotationConfig) -> bool:
     if not validation_scores:
         return True
     ordered = sorted(validation_scores, key=lambda item: item.score, reverse=True)
     best = ordered[0]
     if angular_distance(best.angle, angle) > 5.0:
         return False
+    if best.score < config.validation_min_score:
+        return False
     if len(ordered) == 1:
-        return best.score > 0.5
-    return best.score - ordered[1].score >= 0.15
+        return True
+    return best.score - ordered[1].score >= config.validation_min_margin
 
 
 def _zero_is_strong(model_scores: list[OrientationScores], config: RotationConfig) -> bool:
@@ -114,6 +116,6 @@ def decide_final_angle(
     if _agreement_count(model_scores, best.angle) < 2:
         return RotationDecision(angle=0.0, should_rotate=False, reason="low_agreement")
     final_angle = _apply_fine_angle(best.angle, fine_angle, config)
-    if not _validation_support(final_angle, validation_scores):
+    if not _validation_support(final_angle, validation_scores, config):
         return RotationDecision(angle=0.0, should_rotate=False, reason="validation_reject")
     return RotationDecision(angle=final_angle, should_rotate=True, reason="accepted")
